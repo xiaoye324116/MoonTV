@@ -40,7 +40,12 @@ import Swal from 'sweetalert2';
 
 import { AdminConfig, AdminConfigResult } from '@/lib/admin.types';
 import { getAuthInfoFromBrowserCookie } from '@/lib/auth';
+import {
+  getDefaultPlaybackSaveInterval,
+  PLAYBACK_SAVE_DEFAULT_SECONDS,
+} from '@/lib/playback-settings';
 
+import { BackButton } from '@/components/BackButton';
 import DataMigration from '@/components/DataMigration';
 import PageLayout from '@/components/PageLayout';
 
@@ -67,9 +72,13 @@ interface SiteConfig {
   DoubanProxy: string;
   DoubanImageProxyType: string;
   DoubanImageProxy: string;
+  BangumiProxy?: string;
+  BangumiImageProxy?: string;
   DisableYellowFilter: boolean;
   TVBoxEnabled?: boolean;
   TVBoxPassword?: string;
+  DanmakuApiBaseUrl?: string;
+  PlaybackSaveInterval?: number;
 }
 
 // 视频源数据类型
@@ -883,6 +892,12 @@ const UserConfig = ({ config, role, refreshConfig }: UserConfigProps) => {
               >
                 分组
               </th>
+              <th
+                scope='col'
+                className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'
+              >
+                最后在线
+              </th>
                 <th
                   scope='col'
                   className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'
@@ -965,6 +980,11 @@ const UserConfig = ({ config, role, refreshConfig }: UserConfigProps) => {
                         </td>
                         <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100'>
                           {user.group || '-'}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100'>
+                          {user.lastOnline
+                            ? new Date(user.lastOnline).toLocaleString('zh-CN', { hour12: false })
+                            : '-'}
                         </td>
                         <td className='px-6 py-4 whitespace-nowrap'>
                           <span
@@ -2004,6 +2024,195 @@ const ConfigFileComponent = ({ config, refreshConfig }: { config: AdminConfig | 
     </div>
   );
 };
+// 订阅配置组件
+const SubscriptionConfig = ({ config, refreshConfig }: { config: AdminConfig | null; refreshConfig: () => Promise<void> }) => {
+  const [subscriptionUrl, setSubscriptionUrl] = useState('');
+  const [autoUpdate, setAutoUpdate] = useState(false);
+  const [updateInterval, setUpdateInterval] = useState(86400); // 默认一天
+  const [importMode, setImportMode] = useState<'overwrite' | 'merge'>('merge');
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
+
+  useEffect(() => {
+    if (config?.SubscriptionConfig) {
+      const sub = config.SubscriptionConfig;
+      setSubscriptionUrl(sub.subscriptionUrl || '');
+      setAutoUpdate(sub.autoUpdate || false);
+      setUpdateInterval(sub.updateInterval || 86400);
+      setImportMode(sub.importMode || 'merge');
+      setLastUpdated(sub.lastUpdated || null);
+    }
+  }, [config]);
+
+  const handleSave = async () => {
+    try {
+      setSaving(true);
+      const resp = await fetch('/api/admin/subscription', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update',
+          subscriptionUrl,
+          autoUpdate,
+          updateInterval,
+          importMode,
+        }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.error || '保存失败');
+      }
+      showSuccess('订阅配置已保存');
+      await refreshConfig();
+    } catch (err) {
+      showError(err instanceof Error ? err.message : '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleImport = async () => {
+    try {
+      setImporting(true);
+      const resp = await fetch('/api/admin/subscription', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'import',
+          subscriptionUrl: subscriptionUrl || undefined,
+          importMode,
+        }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.error || '导入失败');
+      }
+      showSuccess('订阅数据导入成功');
+      await refreshConfig();
+    } catch (err) {
+      showError(err instanceof Error ? err.message : '导入失败');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const formatTime = (timestamp: number) => {
+    return new Date(timestamp * 1000).toLocaleString('zh-CN');
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            订阅地址 URL
+          </label>
+          <input
+            type="text"
+            value={subscriptionUrl}
+            onChange={(e) => setSubscriptionUrl(e.target.value)}
+            placeholder="https://example.com/subscription.json"
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+          />
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            订阅地址返回的数据应为 JSON 格式，支持 Base58 编码。
+          </p>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              自动更新
+            </label>
+            <button
+              onClick={() => setAutoUpdate(!autoUpdate)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full ${autoUpdate ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${autoUpdate ? 'translate-x-6' : 'translate-x-1'}`}
+              />
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            用户/管理员登录时检查更新，若超过更新周期则自动导入。
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            更新周期（秒）
+          </label>
+          <input
+            type="number"
+            value={updateInterval}
+            onChange={(e) => setUpdateInterval(Number(e.target.value))}
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+            min="60"
+          />
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            例如：86400 秒 = 1 天
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            导入模式
+          </label>
+          <div className="flex space-x-4">
+            <label className="inline-flex items-center">
+              <input
+                type="radio"
+                checked={importMode === 'merge'}
+                onChange={() => setImportMode('merge')}
+                className="form-radio"
+              />
+              <span className="ml-2">合并（根据key值合并）</span>
+            </label>
+            <label className="inline-flex items-center">
+              <input
+                type="radio"
+                checked={importMode === 'overwrite'}
+                onChange={() => setImportMode('overwrite')}
+                className="form-radio"
+              />
+              <span className="ml-2">覆盖（清空现有源）</span>
+            </label>
+          </div>
+        </div>
+
+        {lastUpdated && (
+          <div className="text-sm text-gray-600 dark:text-gray-400">
+            最后更新时间：{formatTime(lastUpdated)}
+          </div>
+        )}
+      </div>
+
+      <div className="flex space-x-4">
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className={`px-4 py-2 rounded-lg transition-colors ${saving
+            ? 'bg-gray-400 cursor-not-allowed'
+            : 'bg-blue-600 hover:bg-blue-700'
+            } text-white`}
+        >
+          {saving ? '保存中...' : '保存配置'}
+        </button>
+        <button
+          onClick={handleImport}
+          disabled={importing || !subscriptionUrl}
+          className={`px-4 py-2 rounded-lg transition-colors ${importing || !subscriptionUrl
+            ? 'bg-gray-400 cursor-not-allowed'
+            : 'bg-green-600 hover:bg-green-700'
+            } text-white`}
+        >
+          {importing ? '导入中...' : '立即导入'}
+        </button>
+      </div>
+    </div>
+  );
+};
 
 // 新增站点配置组件
 const SiteConfigComponent = ({ config }: { config: AdminConfig | null }) => {
@@ -2016,9 +2225,13 @@ const SiteConfigComponent = ({ config }: { config: AdminConfig | null }) => {
     DoubanProxy: '',
     DoubanImageProxyType: 'direct',
     DoubanImageProxy: '',
+    BangumiProxy: '',
+    BangumiImageProxy: '',
     DisableYellowFilter: false,
     TVBoxEnabled: false,
     TVBoxPassword: '',
+    DanmakuApiBaseUrl: '',
+    PlaybackSaveInterval: PLAYBACK_SAVE_DEFAULT_SECONDS,
   });
   // 保存状态
   const [saving, setSaving] = useState(false);
@@ -2085,6 +2298,15 @@ const SiteConfigComponent = ({ config }: { config: AdminConfig | null }) => {
     typeof window !== 'undefined' &&
     (window as any).RUNTIME_CONFIG?.STORAGE_TYPE === 'localstorage';
 
+  // 播放进度保存间隔的默认值：环境变量优先，否则按存储类型取默认（Upstash 20s，其余 5s）
+  const defaultSaveInterval =
+    Number(process.env.NEXT_PUBLIC_PLAYBACK_SAVE_INTERVAL) ||
+    getDefaultPlaybackSaveInterval(
+      typeof window !== 'undefined'
+        ? (window as any).RUNTIME_CONFIG?.STORAGE_TYPE
+        : 'localstorage'
+    );
+
   useEffect(() => {
     if (config?.SiteConfig) {
       setSiteSettings({
@@ -2094,12 +2316,20 @@ const SiteConfigComponent = ({ config }: { config: AdminConfig | null }) => {
         DoubanImageProxyType:
           config.SiteConfig.DoubanImageProxyType || 'direct',
         DoubanImageProxy: config.SiteConfig.DoubanImageProxy || '',
+        BangumiProxy: config.SiteConfig.BangumiProxy || '',
+        BangumiImageProxy:
+          config.SiteConfig.BangumiImageProxy || '',
         DisableYellowFilter: config.SiteConfig.DisableYellowFilter || false,
         TVBoxEnabled: config.SiteConfig.TVBoxEnabled || false,
         TVBoxPassword: config.SiteConfig.TVBoxPassword || '',
+        DanmakuApiBaseUrl:
+          config.SiteConfig.DanmakuApiBaseUrl ||
+          '',
+        PlaybackSaveInterval:
+          config.SiteConfig.PlaybackSaveInterval || defaultSaveInterval,
       });
     }
-  }, [config]);
+  }, [config, defaultSaveInterval]);
 
   // 点击外部区域关闭下拉框
   useEffect(() => {
@@ -2364,6 +2594,30 @@ const SiteConfigComponent = ({ config }: { config: AdminConfig | null }) => {
         )}
       </div>
 
+      {/* 弹幕接口配置 */}
+      <div className='space-y-3'>
+        <div>
+          <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+            弹幕接口基础地址
+            <span className='ml-2 text-xs text-gray-500 dark:text-gray-400'>
+              （如使用第三方弹幕服务，可在此填写其 API 根地址）
+            </span>
+          </label>
+          <input
+            type='text'
+            value={siteSettings.DanmakuApiBaseUrl || ''}
+            onChange={(e) =>
+              setSiteSettings((prev) => ({
+                ...prev,
+                DanmakuApiBaseUrl: e.target.value,
+              }))
+            }
+            className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
+            placeholder=''
+          />
+        </div>
+      </div>
+
       {/* 豆瓣图片代理设置 */}
       <div className='space-y-3'>
         <div>
@@ -2481,6 +2735,72 @@ const SiteConfigComponent = ({ config }: { config: AdminConfig | null }) => {
         )}
       </div>
 
+      {/* Bangumi 数据代理 */}
+      <div>
+        <label
+          className={`block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 ${isLocalStorage ? 'opacity-50' : ''
+            }`}
+        >
+          Bangumi 数据代理
+          {isLocalStorage && (
+            <span className='ml-2 text-xs text-gray-500 dark:text-gray-400'>
+              (本地存储下请通过环境变量 NEXT_PUBLIC_BANGUMI_PROXY 修改)
+            </span>
+          )}
+        </label>
+        <input
+          type='text'
+          placeholder='例如: https://bgmapi.example.com'
+          value={siteSettings.BangumiProxy || ''}
+          onChange={(e) =>
+            !isLocalStorage &&
+            setSiteSettings((prev) => ({
+              ...prev,
+              BangumiProxy: e.target.value,
+            }))
+          }
+          disabled={isLocalStorage}
+          className={`w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 shadow-sm hover:border-gray-400 dark:hover:border-gray-500 ${isLocalStorage ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
+        />
+        <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
+          设置 Bangumi API 代理地址，留空则使用官方 API（由后端代理请求，前端不直接访问）
+        </p>
+      </div>
+
+      {/* Bangumi 图片代理 */}
+      <div>
+        <label
+          className={`block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 ${isLocalStorage ? 'opacity-50' : ''
+            }`}
+        >
+          Bangumi 图片代理
+          {isLocalStorage && (
+            <span className='ml-2 text-xs text-gray-500 dark:text-gray-400'>
+              (本地存储下请通过环境变量 NEXT_PUBLIC_BANGUMI_IMAGE_PROXY 修改)
+            </span>
+          )}
+        </label>
+        <input
+          type='text'
+          placeholder='例如: https://bgmimg.example.com'
+          value={siteSettings.BangumiImageProxy || ''}
+          onChange={(e) =>
+            !isLocalStorage &&
+            setSiteSettings((prev) => ({
+              ...prev,
+              BangumiImageProxy: e.target.value,
+            }))
+          }
+          disabled={isLocalStorage}
+          className={`w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 shadow-sm hover:border-gray-400 dark:hover:border-gray-500 ${isLocalStorage ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
+        />
+        <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
+          设置 Bangumi 图片代理域名，用于替换 lain.bgm.tv 图片地址
+        </p>
+      </div>
+
       {/* 搜索接口可拉取最大页数 */}
       <div>
         <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
@@ -2517,6 +2837,32 @@ const SiteConfigComponent = ({ config }: { config: AdminConfig | null }) => {
           }
           className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
         />
+      </div>
+
+      {/* 播放进度自动保存间隔 */}
+      <div>
+        <div className='flex items-center justify-between'>
+          <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+            播放进度自动保存间隔（秒）
+          </label>
+        </div>
+        <input
+          type='number'
+          min={5}
+          max={300}
+          step={1}
+          value={siteSettings.PlaybackSaveInterval}
+          onChange={(e) =>
+            setSiteSettings((prev) => ({
+              ...prev,
+              PlaybackSaveInterval: Number(e.target.value),
+            }))
+          }
+          className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
+        />
+        <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
+          控制播放过程中每隔多少秒自动保存一次播放进度。数值越小进度保存越精确，但会带来更多接口请求与数据库写入；建议范围 5 ~ 60 秒（Upstash 等按量计费的存储建议 ≥ 20 秒）。默认值按存储类型给出（Upstash 20 秒，其余 5 秒）。
+        </p>
       </div>
 
       {/* 禁用黄色过滤器 */}
@@ -2743,6 +3089,7 @@ function AdminPageClient() {
     siteConfig: false,
     categoryConfig: false,
     configFile: false,
+    subscriptionConfig: false,
   });
 
   // 获取管理员配置
@@ -2814,10 +3161,13 @@ function AdminPageClient() {
     return (
       <PageLayout activePath='/admin'>
         <div className='px-2 sm:px-10 py-4 sm:py-8'>
-          <div className='max-w-[95%] mx-auto'>
-            <h1 className='text-2xl font-bold text-gray-900 dark:text-gray-100 mb-8'>
-              管理员设置
-            </h1>
+        <div className='max-w-[95%] mx-auto'>
+          <div className='mb-6'>
+            <BackButton showLabel />
+          </div>
+          <h1 className='text-2xl font-bold text-gray-900 dark:text-gray-100 mb-8'>
+            管理员设置
+          </h1>
             <div className='space-y-4'>
               {Array.from({ length: 3 }).map((_, index) => (
                 <div
@@ -2841,8 +3191,9 @@ function AdminPageClient() {
     <PageLayout activePath='/admin'>
       <div className='px-2 sm:px-10 py-4 sm:py-8'>
         <div className='max-w-[95%] mx-auto'>
-          {/* 标题 + 重置配置按钮 */}
+          {/* 返回 + 标题 + 重置配置按钮 */}
           <div className='flex items-center gap-2 mb-8'>
+            <BackButton showLabel />
             <h1 className='text-2xl font-bold text-gray-900 dark:text-gray-100'>
               管理员设置
             </h1>
@@ -2871,6 +3222,21 @@ function AdminPageClient() {
               </button>
             )}
           </div>
+
+          {/* 订阅配置标签 */}
+          <CollapsibleTab
+            title='订阅配置'
+            icon={
+              <Bell
+                size={20}
+                className='text-gray-600 dark:text-gray-400'
+              />
+            }
+            isExpanded={expandedTabs.subscriptionConfig}
+            onToggle={() => toggleTab('subscriptionConfig')}
+          >
+            <SubscriptionConfig config={config} refreshConfig={fetchConfig} />
+          </CollapsibleTab>
 
           {/* 配置文件标签 */}
           <CollapsibleTab

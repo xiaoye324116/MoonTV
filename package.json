@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "pnpm gen:manifest && pnpm gen:runtime && next dev -H 0.0.0.0",
-    "build": "pnpm gen:manifest && pnpm gen:runtime && next build",
+    "build": "pnpm gen:manifest && pnpm gen:runtime && next build && pnpm restore:sw",
     "start": "next start",
     "lint": "next lint",
     "lint:fix": "eslint src --fix && pnpm format",
@@ -16,7 +16,9 @@
     "format:check": "prettier -c .",
     "gen:manifest": "node scripts/generate-manifest.js",
     "gen:runtime": "node scripts/generate-runtime.js",
-    "postbuild": "echo 'Build completed - sitemap generation disabled'",
+    "gen:version": "node scripts/convert-changelog.js",
+    "check:version": "node scripts/convert-changelog.js --check",
+    "restore:sw": "node scripts/restore-sw.js",
     "prepare": "husky install",
     "pages:build": "npx @cloudflare/next-on-pages"
   },
@@ -31,6 +33,7 @@
     "@upstash/redis": "^1.25.0",
     "@vidstack/react": "^1.12.13",
     "artplayer": "^5.2.5",
+    "artplayer-plugin-danmuku": "^5.2.0",
     "clsx": "^2.0.0",
     "crypto-js": "^4.2.0",
     "framer-motion": "^12.18.1",
@@ -39,6 +42,7 @@
     "hls.js": "^1.6.6",
     "lucide-react": "^0.438.0",
     "media-icons": "^1.1.5",
+    "mux.js": "github:Momo707577045/mux.js",
     "next": "14.2.30",
     "next-pwa": "^5.6.0",
     "next-themes": "^0.4.6",
@@ -63,6 +67,7 @@
     "@testing-library/react": "^15.0.7",
     "@types/aria-query": "^5.0.4",
     "@types/he": "^1.2.3",
+    "@types/jest": "^27.5.2",
     "@types/node": "24.0.3",
     "@types/pako": "^2.0.4",
     "@types/react": "^18.3.18",
@@ -89,10 +94,10 @@
   "lint-staged": {
     "**/*.{js,jsx,ts,tsx}": [
       "eslint --max-warnings=0",
-      "prettier -w"
+      "prettier --plugin-search-dir .husky -w"
     ],
     "**/*.{json,css,scss,md,webmanifest}": [
-      "prettier -w"
+      "prettier --plugin-search-dir .husky -w"
     ]
   },
   "packageManager": "pnpm@10.14.0"
